@@ -1,0 +1,10 @@
+[package]
+name = "bgpsimulator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[package]
+repository = "https://github.com/jfuruness/bgpsimulator_rust"
+documentation = "https://docs.rs/bgpsimulator"
