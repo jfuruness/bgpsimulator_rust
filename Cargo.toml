@@ -3,7 +3,7 @@ name = "bgpsimulator"
 version = "0.1.0"
 edition = "2024"
 description = "A BGP protocol simulator written in Rust."
-license = "BSD-3-Clause"
+license = "License.txt"
 repository = "https://github.com/jfuruness/bgpsimulator_rust"
 documentation = "https://docs.rs/bgpsimulator"
 
