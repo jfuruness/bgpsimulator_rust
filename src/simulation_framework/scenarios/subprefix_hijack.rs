@@ -4,8 +4,8 @@ use std::str::FromStr;
 
 use ipnetwork::IpNetwork;
 
-use crate::as_graph::{ASGraph, ASN};
-use crate::engine::SimulationEngine;
+use crate::as_graphs::as_graph::{ASGraph, ASN};
+use crate::simulation_engine::SimulationEngine;
 use crate::route_validator::{ROA, RouteValidator};
 use crate::shared::{Relationships, Timestamps};
 use crate::simulation_engine::{Announcement, Prefix};
@@ -53,7 +53,7 @@ impl ScenarioTrait for SubprefixHijack {
         
         // Legitimate announcement
         for &asn in &self.legitimate_origin_asns {
-            let ann = Announcement::new(
+            let ann = Announcement::new_with_path(
                 self.legitimate_prefix,
                 vec![],  // Empty AS path for origin
                 asn,
@@ -65,7 +65,7 @@ impl ScenarioTrait for SubprefixHijack {
         
         // Attacker announcement (more specific prefix)
         for &asn in &self.attacker_asns {
-            let ann = Announcement::new(
+            let ann = Announcement::new_with_path(
                 self.hijacked_prefix,
                 vec![],  // Empty AS path for origin
                 asn,

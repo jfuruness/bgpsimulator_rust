@@ -1,8 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::shared::{Relationships, Settings, Timestamps};
-use crate::as_graph::{AS, ASN, ASGraph};
-use crate::policies::{PolicyExtension, ProcessingResult, create_policy_extension};
+use crate::as_graphs::as_graph::{AS, ASN, ASGraph};
+use crate::simulation_engine::policy::{PolicyExtension, ProcessingResult, create_policy_extension};
 
 pub type Prefix = ipnetwork::IpNetwork;
 
@@ -23,6 +23,26 @@ pub struct Announcement {
 
 impl Announcement {
     pub fn new(
+        prefix: Prefix,
+        next_hop_asn: ASN,
+        recv_relationship: Relationships,
+    ) -> Self {
+        Announcement {
+            prefix,
+            as_path: Vec::new(),
+            next_hop_asn,
+            recv_relationship,
+            timestamp: Timestamps::Victim,
+            withdraw: false,
+            bgpsec_next_asn: None,
+            bgpsec_as_path: None,
+            only_to_customers: None,
+            rovpp_blackhole: None,
+            rost_ids: None,
+        }
+    }
+    
+    pub fn new_with_path(
         prefix: Prefix,
         as_path: Vec<ASN>,
         next_hop_asn: ASN,
@@ -198,11 +218,11 @@ impl Policy {
     }
 
     fn get_relationship(&self, neighbor_asn: &ASN, as_obj: &AS) -> Relationships {
-        if as_obj.customers.contains(neighbor_asn) {
+        if as_obj.customers.iter().any(|as_ref| as_ref.asn == *neighbor_asn) {
             Relationships::Customers
-        } else if as_obj.peers.contains(neighbor_asn) {
+        } else if as_obj.peers.iter().any(|as_ref| as_ref.asn == *neighbor_asn) {
             Relationships::Peers
-        } else if as_obj.providers.contains(neighbor_asn) {
+        } else if as_obj.providers.iter().any(|as_ref| as_ref.asn == *neighbor_asn) {
             Relationships::Providers
         } else {
             Relationships::Unknown
@@ -233,7 +253,8 @@ impl Policy {
         let neighbors = as_obj.get_neighbors(rel);
         let mut anns_to_send = Vec::new();
         
-        for &neighbor_asn in neighbors {
+        for neighbor_as in neighbors {
+            let neighbor_asn = neighbor_as.asn;
             let new_ann = ann.copy_and_process(as_obj.asn, rel);
             
             self.ribs_out.entry(neighbor_asn)
@@ -251,8 +272,22 @@ impl Policy {
         }
     }
 
-    pub fn seed_ann(&mut self, ann: Announcement) {
-        self.receive_ann(ann, Relationships::Origin);
+    pub fn seed_ann(&mut self, mut ann: Announcement) {
+        // If the AS path is empty, set it to just our ASN (origination)
+        // Otherwise, preserve the existing path (for testing scenarios)
+        if ann.as_path.is_empty() && !ann.withdraw {
+            ann.as_path = vec![self.asn];
+        }
+        ann.next_hop_asn = self.asn;
+        ann.recv_relationship = Relationships::Origin;
+        
+        if ann.withdraw {
+            // For withdrawals, remove from local RIB
+            self.local_rib.remove(&ann.prefix);
+        } else {
+            // For announcements, put in local RIB
+            self.local_rib.insert(ann.prefix, ann);
+        }
     }
 }
 

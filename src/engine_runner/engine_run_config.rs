@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 use std::sync::Mutex;
 
-use crate::as_graph::ASGraph;
+use crate::as_graphs::as_graph::ASGraph;
 use crate::simulation_framework::scenario_config::ScenarioConfig;
 
 /// Configuration for a single engine run
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct EngineRunConfig {
     /// Unique name for this engine run
     pub name: String,

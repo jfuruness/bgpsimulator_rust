@@ -5,8 +5,8 @@ use std::time::Instant;
 
 use indicatif::{ProgressBar, ProgressStyle};
 
-use crate::as_graph::ASGraph;
-use crate::engine::SimulationEngine;
+use crate::as_graphs::as_graph::ASGraph;
+use crate::simulation_engine::SimulationEngine;
 use crate::route_validator::RouteValidator;
 use crate::shared::{Outcomes, Settings};
 
@@ -161,7 +161,7 @@ impl Simulation {
     /// Run a single trial of a scenario
     fn run_single_trial(&self, scenario: &Scenario) -> Result<Outcomes, Box<dyn std::error::Error>> {
         // Create a fresh engine for this trial
-        let mut engine = SimulationEngine::new(self.as_graph.clone());
+        let mut engine = SimulationEngine::new(&self.as_graph);
         
         // Apply adoption settings to policies
         for (asn, policy) in engine.policy_store.iter_mut() {
@@ -171,7 +171,7 @@ impl Simulation {
                     if enabled {
                         policy.settings = *setting;
                         // Update the policy extension based on new settings
-                        policy.extension = crate::policies::create_policy_extension(*setting);
+                        policy.extension = crate::simulation_engine::policy::create_policy_extension(*setting);
                     }
                 }
             }

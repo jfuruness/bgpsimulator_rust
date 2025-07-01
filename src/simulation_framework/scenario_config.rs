@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 
-use crate::as_graph::ASN;
+use crate::as_graphs::as_graph::ASN;
 use crate::route_validator::ROA;
 use crate::shared::Settings;
 use crate::simulation_engine::Announcement;

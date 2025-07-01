@@ -1,7 +1,6 @@
 pub mod caida;
 
-use crate::as_graph::{ASGraph, AS, ASN};
-use std::collections::{HashMap, HashSet};
+use crate::as_graphs::as_graph::ASGraph;
 
 pub trait ASGraphGenerator {
     fn generate(&self) -> Result<ASGraph, Box<dyn std::error::Error>>;
@@ -33,10 +32,7 @@ impl CAIDAASGraphGenerator {
 
 impl ASGraphGenerator for CAIDAASGraphGenerator {
     fn generate(&self) -> Result<ASGraph, Box<dyn std::error::Error>> {
-        let collector = caida::CAIDAASGraphCollector::new(self.days_ago, &self.cache_dir);
-        let cached_path = collector.run()?;
-        
-        let converter = caida::CAIDAASGraphJSONConverter::new(&cached_path);
-        converter.convert()
+        // TODO: Implement CAIDA graph generation with new AS graph API
+        unimplemented!("CAIDA graph generation not yet implemented")
     }
 }

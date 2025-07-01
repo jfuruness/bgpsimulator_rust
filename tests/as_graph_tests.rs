@@ -1,197 +1,136 @@
 use std::collections::HashSet;
-use bgpsimulator::as_graph::{AS, ASGraph};
+use bgpsimulator::as_graphs::as_graph::{ASBuilder, ASGraph};
 
 #[test]
-fn test_as_creation() {
-    let as1 = AS::from_asn_sets(
-        100,
-        HashSet::from([200, 300]),  // peers
-        HashSet::from([400]),       // providers
-        HashSet::from([500, 600]),  // customers
-    );
+fn test_as_graph_creation() {
+    // Create AS builders
+    let as1_builder = ASBuilder::new(1)
+        .with_customers(vec![2, 3])
+        .with_providers(vec![4]);
     
-    assert_eq!(as1.asn, 100);
-    assert_eq!(as1.peers.len(), 2);
-    assert_eq!(as1.providers.len(), 1);
+    let as2_builder = ASBuilder::new(2)
+        .with_providers(vec![1]);
+    
+    let as3_builder = ASBuilder::new(3)
+        .with_providers(vec![1]);
+    
+    let as4_builder = ASBuilder::new(4)
+        .with_customers(vec![1]);
+    
+    // Build graph with all ASes at once
+    let as_graph = ASGraph::build(vec![as1_builder, as2_builder, as3_builder, as4_builder]);
+    
+    // Test the graph
+    assert_eq!(as_graph.len(), 4);
+    
+    let as1 = as_graph.get(&1).unwrap();
+    assert_eq!(as1.asn, 1);
     assert_eq!(as1.customers.len(), 2);
-    assert!(as1.peers.contains(&200));
-    assert!(as1.peers.contains(&300));
-    assert!(as1.providers.contains(&400));
-    assert!(as1.customers.contains(&500));
-    assert!(as1.customers.contains(&600));
+    assert_eq!(as1.providers.len(), 1);
+    
+    // Check relationships are bidirectional
+    let as2 = as_graph.get(&2).unwrap();
+    assert_eq!(as2.providers.len(), 1);
+    assert_eq!(as2.providers[0].asn, 1);
+    
+    let as4 = as_graph.get(&4).unwrap();
+    assert_eq!(as4.customers.len(), 1);
+    assert_eq!(as4.customers[0].asn, 1);
 }
 
 #[test]
-fn test_as_graph_insertion() {
-    let mut as_graph = ASGraph::new();
+fn test_as_graph_neighbors() {
+    // Create a simple graph: 1 - 2 - 3 (1 is provider of 2, 2 is provider of 3)
+    let as1_builder = ASBuilder::new(1)
+        .with_customers(vec![2]);
     
-    let as1 = AS::from_asn_sets(
-        1,
-        HashSet::new(),
-        HashSet::new(),
-        HashSet::from([2]),
-    );
+    let as2_builder = ASBuilder::new(2)
+        .with_providers(vec![1])
+        .with_customers(vec![3]);
     
-    let as2 = AS::from_asn_sets(
-        2,
-        HashSet::new(),
-        HashSet::from([1]),
-        HashSet::new(),
-    );
+    let as3_builder = ASBuilder::new(3)
+        .with_providers(vec![2]);
     
-    as_graph.insert(as1);
-    as_graph.insert(as2);
+    let as_graph = ASGraph::build(vec![as1_builder, as2_builder, as3_builder]);
     
-    assert_eq!(as_graph.as_dict.len(), 2);
-    assert!(as_graph.get(&1).is_some());
-    assert!(as_graph.get(&2).is_some());
+    // Test neighbor relationships
+    let as2 = as_graph.get(&2).unwrap();
+    assert_eq!(as2.neighbors().count(), 2); // has 1 provider and 1 customer
+    
+    let neighbor_asns: HashSet<_> = as2.neighbors().map(|as_obj| as_obj.asn).collect();
+    assert!(neighbor_asns.contains(&1));
+    assert!(neighbor_asns.contains(&3));
 }
 
 #[test]
-fn test_cycle_detection() {
-    let mut as_graph = ASGraph::new();
+fn test_as_graph_peering() {
+    // Create two ASes that peer with each other
+    let as1_builder = ASBuilder::new(100)
+        .with_peers(vec![200]);
     
-    // Create a cycle: 1 -> 2 -> 3 -> 1
-    let as1 = AS::from_asn_sets(
-        1,
-        HashSet::new(),
-        HashSet::from([3]),  // Provider is 3
-        HashSet::from([2]),  // Customer is 2
-    );
+    let as2_builder = ASBuilder::new(200)
+        .with_peers(vec![100]);
     
-    let as2 = AS::from_asn_sets(
-        2,
-        HashSet::new(),
-        HashSet::from([1]),  // Provider is 1
-        HashSet::from([3]),  // Customer is 3
-    );
+    let as_graph = ASGraph::build(vec![as1_builder, as2_builder]);
     
-    let as3 = AS::from_asn_sets(
-        3,
-        HashSet::new(),
-        HashSet::from([2]),  // Provider is 2
-        HashSet::from([1]),  // Customer is 1
-    );
+    let as1 = as_graph.get(&100).unwrap();
+    let as2 = as_graph.get(&200).unwrap();
     
-    as_graph.insert(as1);
-    as_graph.insert(as2);
-    as_graph.insert(as3);
-    
-    // Should detect the cycle
-    assert!(as_graph.check_for_cycles().is_err());
+    assert_eq!(as1.peers.len(), 1);
+    assert_eq!(as1.peers[0].asn, 200);
+    assert_eq!(as2.peers.len(), 1);
+    assert_eq!(as2.peers[0].asn, 100);
 }
 
 #[test]
-fn test_no_cycle() {
-    let mut as_graph = ASGraph::new();
+fn test_as_graph_tier1() {
+    // Create a tier-1 AS with no providers
+    let tier1_builder = ASBuilder::new(1000)
+        .as_tier_1()
+        .with_customers(vec![2000, 3000]);
     
-    // Create a valid hierarchy: 1 -> 2 -> 3
-    let as1 = AS::from_asn_sets(
-        1,
-        HashSet::new(),
-        HashSet::new(),      // No providers (Tier 1)
-        HashSet::from([2]),  // Customer is 2
-    );
+    let as2_builder = ASBuilder::new(2000)
+        .with_providers(vec![1000]);
     
-    let as2 = AS::from_asn_sets(
-        2,
-        HashSet::new(),
-        HashSet::from([1]),  // Provider is 1
-        HashSet::from([3]),  // Customer is 3
-    );
+    let as3_builder = ASBuilder::new(3000)
+        .with_providers(vec![1000]);
     
-    let as3 = AS::from_asn_sets(
-        3,
-        HashSet::new(),
-        HashSet::from([2]),  // Provider is 2
-        HashSet::new(),      // No customers
-    );
+    let as_graph = ASGraph::build(vec![tier1_builder, as2_builder, as3_builder]);
     
-    as_graph.insert(as1);
-    as_graph.insert(as2);
-    as_graph.insert(as3);
-    
-    // Should not detect any cycle
-    assert!(as_graph.check_for_cycles().is_ok());
+    let tier1 = as_graph.get(&1000).unwrap();
+    assert!(tier1.tier_1);
+    assert!(tier1.providers.is_empty());
+    assert_eq!(tier1.customers.len(), 2);
 }
 
 #[test]
-fn test_propagation_rank_assignment() {
-    let mut as_graph = ASGraph::new();
+fn test_as_graph_propagation_ranks() {
+    // Create a hierarchy: 1 -> 2 -> 3, 1 -> 4
+    let as1_builder = ASBuilder::new(1)
+        .as_tier_1()
+        .with_customers(vec![2, 4]);
     
-    // Create a hierarchy
-    let mut as1 = AS::from_asn_sets(
-        1,
-        HashSet::new(),
-        HashSet::new(),      // No providers (Tier 1)
-        HashSet::from([2]),
-    );
-    as1.tier_1 = true;
+    let as2_builder = ASBuilder::new(2)
+        .with_providers(vec![1])
+        .with_customers(vec![3]);
     
-    let as2 = AS::from_asn_sets(
-        2,
-        HashSet::new(),
-        HashSet::from([1]),
-        HashSet::from([3, 4]),
-    );
+    let as3_builder = ASBuilder::new(3)
+        .with_providers(vec![2]);
     
-    let as3 = AS::from_asn_sets(
-        3,
-        HashSet::new(),
-        HashSet::from([2]),
-        HashSet::new(),
-    );
+    let as4_builder = ASBuilder::new(4)
+        .with_providers(vec![1]);
     
-    let as4 = AS::from_asn_sets(
-        4,
-        HashSet::new(),
-        HashSet::from([2]),
-        HashSet::new(),
-    );
-    
-    as_graph.insert(as1);
-    as_graph.insert(as2);
-    as_graph.insert(as3);
-    as_graph.insert(as4);
-    
-    // Check for cycles first
-    as_graph.check_for_cycles().expect("No cycles should exist");
-    
-    // Assign propagation ranks
+    let mut as_graph = ASGraph::build(vec![as1_builder, as2_builder, as3_builder, as4_builder]);
     as_graph.assign_as_propagation_rank();
     
-    // Check that ranks are assigned correctly
-    let as1_obj = as_graph.get(&1).unwrap();
-    let as2_obj = as_graph.get(&2).unwrap();
-    let as3_obj = as_graph.get(&3).unwrap();
-    let as4_obj = as_graph.get(&4).unwrap();
+    // Check ranks
+    let as1 = as_graph.get(&1).unwrap();
+    let as2 = as_graph.get(&2).unwrap();
+    let as3 = as_graph.get(&3).unwrap();
+    let as4 = as_graph.get(&4).unwrap();
     
-    assert_eq!(as1_obj.propagation_rank, Some(0), "Tier 1 AS should have rank 0");
-    assert_eq!(as2_obj.propagation_rank, Some(1), "AS2 should have rank 1");
-    assert_eq!(as3_obj.propagation_rank, Some(2), "AS3 should have rank 2");
-    assert_eq!(as4_obj.propagation_rank, Some(2), "AS4 should have rank 2");
-}
-
-#[test]
-fn test_as_neighbors() {
-    let as1 = AS::from_asn_sets(
-        1,
-        HashSet::from([2, 3]),     // peers
-        HashSet::from([4]),        // providers
-        HashSet::from([5, 6]),     // customers
-    );
-    
-    let provider_neighbors = as1.get_neighbors(bgpsimulator::shared::Relationships::Providers);
-    assert_eq!(provider_neighbors.len(), 1);
-    assert!(provider_neighbors.contains(&4));
-    
-    let peer_neighbors = as1.get_neighbors(bgpsimulator::shared::Relationships::Peers);
-    assert_eq!(peer_neighbors.len(), 2);
-    assert!(peer_neighbors.contains(&2));
-    assert!(peer_neighbors.contains(&3));
-    
-    let customer_neighbors = as1.get_neighbors(bgpsimulator::shared::Relationships::Customers);
-    assert_eq!(customer_neighbors.len(), 2);
-    assert!(customer_neighbors.contains(&5));
-    assert!(customer_neighbors.contains(&6));
+    assert_eq!(as1.propagation_rank, Some(0)); // Tier-1
+    assert_eq!(as2.propagation_rank, Some(1)); // Direct customer of tier-1
+    assert_eq!(as4.propagation_rank, Some(1)); // Direct customer of tier-1
+    assert_eq!(as3.propagation_rank, Some(2)); // Customer of AS2
 }

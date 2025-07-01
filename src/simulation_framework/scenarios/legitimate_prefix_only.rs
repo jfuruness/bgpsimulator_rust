@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 use ipnetwork::IpNetwork;
 use std::str::FromStr;
 
-use crate::as_graph::{ASGraph, ASN};
-use crate::engine::SimulationEngine;
+use crate::as_graphs::as_graph::{ASGraph, ASN};
+use crate::simulation_engine::SimulationEngine;
 use crate::route_validator::{ROA, RouteValidator};
 use crate::shared::{CommonASNs, Relationships, Timestamps};
 use crate::simulation_engine::Announcement;
@@ -42,7 +42,7 @@ impl ScenarioTrait for LegitimatePrefixOnly {
         // Only legitimate announcement
         for &asn in &self.legitimate_origin_asns {
             let prefix = IpNetwork::from_str("10.0.0.0/24").unwrap();
-            let ann = Announcement::new(
+            let ann = Announcement::new_with_path(
                 prefix,
                 vec![],
                 asn,

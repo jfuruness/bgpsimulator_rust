@@ -4,7 +4,7 @@ use lru::LruCache;
 use ipnetwork::IpNetwork;
 
 use crate::shared::{ROAValidity, ROARouted};
-use crate::as_graph::ASN;
+use crate::as_graphs::as_graph::ASN;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ROA {

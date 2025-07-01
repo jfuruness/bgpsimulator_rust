@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 
-use crate::engine::SimulationEngine;
+use crate::simulation_engine::SimulationEngine;
 use crate::route_validator::RouteValidator;
 use crate::shared::Outcomes;
 use crate::simulation_framework::scenario::{Scenario, ScenarioTrait};
@@ -106,7 +106,7 @@ impl EngineRunner {
     
     fn get_engine_and_scenario(&self) -> Result<(SimulationEngine, Box<dyn ScenarioTrait>), Box<dyn std::error::Error>> {
         // Create engine
-        let mut engine = SimulationEngine::new(self.config.as_graph.clone());
+        let mut engine = SimulationEngine::new(&self.config.as_graph);
         
         // Create scenario based on scenario name
         let scenario: Box<dyn ScenarioTrait> = match self.config.scenario_config.scenario_name.as_str() {

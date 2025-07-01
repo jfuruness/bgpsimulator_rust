@@ -1,23 +1,15 @@
-mod shared;
-mod as_graph;
-mod simulation_engine;
-mod route_validator;
-mod engine;
-mod as_graph_generators;
-mod policies;
-mod simulation_framework;
-mod engine_runner;
+// Use the library crate modules
+use bgpsimulator::*;
 
 use std::collections::HashSet;
 use ipnetwork::IpNetwork;
 use std::str::FromStr;
 
-use crate::as_graph::{AS, ASGraph};
-use crate::engine::SimulationEngine;
-use crate::engine_runner::{EngineRunConfig, EngineRunner};
-use crate::simulation_engine::Announcement;
-use crate::simulation_framework::scenario_config::ScenarioConfig;
-use crate::shared::{CommonASNs, Relationships, Settings, Timestamps};
+use bgpsimulator::as_graphs::as_graph::{ASBuilder, ASGraph};
+use bgpsimulator::simulation_engine::{SimulationEngine, Announcement};
+use bgpsimulator::engine_runner::{EngineRunConfig, EngineRunner};
+use bgpsimulator::simulation_framework::scenario_config::ScenarioConfig;
+use bgpsimulator::shared::{CommonASNs, Relationships, Settings, Timestamps};
 
 fn main() {
     println!("BGP Simulator - Rust\n");
@@ -44,11 +36,11 @@ fn run_simple_propagation_example() {
     as_graph.add_asn_groups();
     
     // Create simulation engine
-    let mut engine = SimulationEngine::new(as_graph);
+    let mut engine = SimulationEngine::new(&as_graph);
     
     // Create an initial announcement from AS 65003
     let prefix = IpNetwork::from_str("10.0.0.0/24").unwrap();
-    let announcement = Announcement::new(
+    let announcement = Announcement::new_with_path(
         prefix,
         vec![],       // Empty AS path for originated announcements
         65003,        // Next hop
@@ -83,13 +75,13 @@ fn run_hijack_scenario_example() {
     println!("----------------------------------");
     
     let as_graph = create_attack_topology();
-    let mut engine = SimulationEngine::new(as_graph);
+    let mut engine = SimulationEngine::new(&as_graph);
     
     // Create legitimate and hijack announcements
     let legitimate_prefix = IpNetwork::from_str("10.0.0.0/24").unwrap();
     let hijacked_prefix = IpNetwork::from_str("10.0.0.0/25").unwrap();
     
-    let legitimate_ann = Announcement::new(
+    let legitimate_ann = Announcement::new_with_path(
         legitimate_prefix,
         vec![],
         CommonASNs::VICTIM,
@@ -97,7 +89,7 @@ fn run_hijack_scenario_example() {
         Timestamps::Victim,
     );
     
-    let hijack_ann = Announcement::new(
+    let hijack_ann = Announcement::new_with_path(
         hijacked_prefix,
         vec![],
         CommonASNs::ATTACKER,
@@ -146,7 +138,7 @@ fn run_defense_scenario_example() {
     println!("----------------------------------------------------");
     
     let as_graph = create_attack_topology();
-    let mut engine = SimulationEngine::new(as_graph.clone());
+    let mut engine = SimulationEngine::new(&as_graph);
     
     // Enable ROV for 50% of ASes
     let all_asns: Vec<u32> = engine.as_graph.as_dict.keys().copied().collect();
@@ -157,13 +149,13 @@ fn run_defense_scenario_example() {
     for i in 0..adopting_count {
         if let Some(policy) = engine.policy_store.get_mut(&all_asns[i]) {
             policy.settings = Settings::Rov;
-            policy.extension = crate::policies::create_policy_extension(Settings::Rov);
+            policy.extension = bgpsimulator::simulation_engine::policy::create_policy_extension(Settings::Rov);
         }
     }
     
     // Create ROA for legitimate prefix
-    let mut route_validator = crate::route_validator::RouteValidator::new();
-    route_validator.add_roa(crate::route_validator::ROA::new(
+    let mut route_validator = bgpsimulator::route_validator::RouteValidator::new();
+    route_validator.add_roa(bgpsimulator::route_validator::ROA::new(
         IpNetwork::from_str("10.0.0.0/24").unwrap(),
         CommonASNs::VICTIM,
         Some(24),  // Max length 24 - subprefixes will be invalid
@@ -173,7 +165,7 @@ fn run_defense_scenario_example() {
     let legitimate_prefix = IpNetwork::from_str("10.0.0.0/24").unwrap();
     let hijacked_prefix = IpNetwork::from_str("10.0.0.0/25").unwrap();
     
-    let legitimate_ann = Announcement::new(
+    let legitimate_ann = Announcement::new_with_path(
         legitimate_prefix,
         vec![],
         CommonASNs::VICTIM,
@@ -181,7 +173,7 @@ fn run_defense_scenario_example() {
         Timestamps::Victim,
     );
     
-    let hijack_ann = Announcement::new(
+    let hijack_ann = Announcement::new_with_path(
         hijacked_prefix,
         vec![],
         CommonASNs::ATTACKER,
@@ -228,87 +220,64 @@ fn run_defense_scenario_example() {
 }
 
 fn create_simple_topology() -> ASGraph {
-    let mut as_graph = ASGraph::new();
-    
     // Create AS 65001 (Tier 1)
-    let mut as1 = AS::from_asn_sets(
-        65001,
-        HashSet::new(),           // No peers
-        HashSet::new(),           // No providers (Tier 1)
-        HashSet::from([65002]),   // Customer: AS 65002
-    );
-    as1.tier_1 = true;
+    let as1_builder = ASBuilder::new(65001)
+        .as_tier_1()
+        .with_customers(vec![65002]);
     
     // Create AS 65002 (Transit)
-    let as2 = AS::from_asn_sets(
-        65002,
-        HashSet::new(),           // No peers
-        HashSet::from([65001]),   // Provider: AS 65001
-        HashSet::from([65003]),   // Customer: AS 65003
-    );
+    let as2_builder = ASBuilder::new(65002)
+        .with_providers(vec![65001])
+        .with_customers(vec![65003]);
     
     // Create AS 65003 (Stub)
-    let as3 = AS::from_asn_sets(
-        65003,
-        HashSet::new(),           // No peers
-        HashSet::from([65002]),   // Provider: AS 65002
-        HashSet::new(),           // No customers (stub)
-    );
+    let as3_builder = ASBuilder::new(65003)
+        .with_providers(vec![65002]);
     
-    // Add to graph
-    as_graph.insert(as1);
-    as_graph.insert(as2);
-    as_graph.insert(as3);
-    
-    as_graph
+    // Build graph
+    ASGraph::build(vec![as1_builder, as2_builder, as3_builder])
 }
 
 fn create_attack_topology() -> ASGraph {
-    let mut as_graph = ASGraph::new();
+    let mut builders = Vec::new();
     
     // Create victim and attacker
-    let victim = AS::from_asn_sets(
-        CommonASNs::VICTIM,
-        HashSet::new(),
-        HashSet::from([1, 2]),     // Providers
-        HashSet::new(),
+    builders.push(
+        ASBuilder::new(CommonASNs::VICTIM)
+            .with_providers(vec![1, 2])
     );
     
-    let attacker = AS::from_asn_sets(
-        CommonASNs::ATTACKER,
-        HashSet::new(),
-        HashSet::from([3, 4]),     // Providers
-        HashSet::new(),
+    builders.push(
+        ASBuilder::new(CommonASNs::ATTACKER)
+            .with_providers(vec![3, 4])
     );
     
     // Create intermediate ASes
     for i in 1..=10 {
-        let providers = if i <= 4 {
-            HashSet::from([i + 4])  // ASes 1-4 have providers 5-8
+        let mut builder = ASBuilder::new(i);
+        
+        if i <= 4 {
+            // ASes 1-4 have providers 5-8
+            builder = builder.with_providers(vec![i + 4]);
         } else {
-            HashSet::new()          // ASes 5-10 are Tier-1
-        };
-        
-        let customers = match i {
-            1 | 2 => HashSet::from([CommonASNs::VICTIM]),
-            3 | 4 => HashSet::from([CommonASNs::ATTACKER]),
-            5 => HashSet::from([1, 3]),
-            6 => HashSet::from([2, 4]),
-            7 => HashSet::from([1, 2]),
-            8 => HashSet::from([3, 4]),
-            _ => HashSet::new(),
-        };
-        
-        let mut as_obj = AS::from_asn_sets(i, HashSet::new(), providers, customers);
-        if i > 4 {
-            as_obj.tier_1 = true;
+            // ASes 5-10 are Tier-1
+            builder = builder.as_tier_1();
         }
         
-        as_graph.insert(as_obj);
+        match i {
+            1 | 2 => builder = builder.with_customers(vec![CommonASNs::VICTIM]),
+            3 | 4 => builder = builder.with_customers(vec![CommonASNs::ATTACKER]),
+            5 => builder = builder.with_customers(vec![1, 3]),
+            6 => builder = builder.with_customers(vec![2, 4]),
+            7 => builder = builder.with_customers(vec![1, 2]),
+            8 => builder = builder.with_customers(vec![3, 4]),
+            _ => {},
+        };
+        
+        builders.push(builder);
     }
     
-    as_graph.insert(victim);
-    as_graph.insert(attacker);
+    let mut as_graph = ASGraph::build(builders);
     
     // Initialize graph
     as_graph.check_for_cycles().expect("No cycles should exist");

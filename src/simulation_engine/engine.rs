@@ -1,21 +1,22 @@
 use std::collections::HashMap;
 
-use crate::as_graph::{ASGraph, ASN};
-use crate::simulation_engine::{PolicyStore, Announcement, AnnInfo};
+use crate::as_graphs::as_graph::{ASGraph, ASN};
+use crate::simulation_engine::{Announcement};
+use crate::simulation_engine::announcement::{PolicyStore, AnnInfo};
 use crate::shared::Relationships;
 
-pub struct SimulationEngine {
-    pub as_graph: ASGraph,
+pub struct SimulationEngine<'a> {
+    pub as_graph: &'a ASGraph,
     pub policy_store: PolicyStore,
 }
 
-impl SimulationEngine {
-    pub fn new(as_graph: ASGraph) -> Self {
+impl<'a> SimulationEngine<'a> {
+    pub fn new(as_graph: &'a ASGraph) -> Self {
         let mut policy_store = PolicyStore::new();
         
         // Create policies for all ASes
-        for as_obj in as_graph.iter() {
-            policy_store.create_policy(as_obj.asn);
+        for (asn, _) in as_graph.as_dict.iter() {
+            policy_store.create_policy(*asn);
         }
         
         SimulationEngine {
@@ -37,6 +38,60 @@ impl SimulationEngine {
         for (asn, ann) in initial_announcements {
             if let Some(policy) = self.policy_store.get_mut(&asn) {
                 policy.seed_ann(ann);
+            }
+        }
+        
+        // Do initial propagation of seeded announcements
+        self.propagate_seeded_announcements();
+    }
+    
+    fn propagate_seeded_announcements(&mut self) {
+        // Collect ASes that have announcements to propagate
+        let mut asns_with_anns = Vec::new();
+        for (asn, policy) in self.policy_store.iter() {
+            if !policy.local_rib.is_empty() {
+                asns_with_anns.push(*asn);
+            }
+        }
+        
+        // Propagate from each AS
+        for asn in asns_with_anns {
+            let as_obj = match self.as_graph.get(&asn) {
+                Some(obj) => obj,
+                None => continue,
+            };
+            
+            let mut anns_to_propagate = Vec::new();
+            
+            if let Some(policy) = self.policy_store.get(&asn) {
+                // For each announcement in local RIB, propagate to neighbors
+                for (prefix, ann) in &policy.local_rib {
+                    // Check propagation to each relationship type
+                    for rel in [Relationships::Customers, Relationships::Peers, Relationships::Providers] {
+                        let neighbors = as_obj.get_neighbors(rel);
+                        
+                        for neighbor_as in neighbors {
+                            let neighbor_asn = neighbor_as.asn;
+                            let recv_rel_for_neighbor = rel.invert();
+                            
+                            // For initial propagation, remove our ASN from the front if present
+                            let mut ann_to_send = ann.clone();
+                            if ann_to_send.as_path.first() == Some(&asn) {
+                                ann_to_send.as_path.remove(0);
+                            }
+                            
+                            let new_ann = ann_to_send.copy_and_process(as_obj.asn, recv_rel_for_neighbor);
+                            anns_to_propagate.push((neighbor_asn, new_ann, recv_rel_for_neighbor));
+                        }
+                    }
+                }
+            }
+            
+            // Send collected announcements
+            for (neighbor_asn, new_ann, rel) in anns_to_propagate {
+                if let Some(neighbor_policy) = self.policy_store.get_mut(&neighbor_asn) {
+                    neighbor_policy.receive_ann(new_ann, rel);
+                }
             }
         }
     }
@@ -80,11 +135,10 @@ impl SimulationEngine {
 
     fn process_asns_for_relationship(&mut self, asns: &[ASN], _relationship: Relationships) {
         // Process each AS's incoming announcements
-        // We need to process one AS at a time to avoid borrowing conflicts
         for &asn in asns {
-            // Get AS object
+            // Get AS object reference - no cloning needed
             let as_obj = match self.as_graph.get(&asn) {
-                Some(obj) => obj.clone(), // Clone to avoid borrowing issues
+                Some(obj) => obj,
                 None => continue,
             };
             
@@ -97,10 +151,11 @@ impl SimulationEngine {
             }
             
             // Process the announcements
-            
             for ann_info in anns_to_process {
                 if let Some(policy) = self.policy_store.get_mut(&asn) {
-                    if policy.valid_ann(&ann_info.ann, ann_info.recv_relationship, &as_obj) {
+                    let is_valid = policy.valid_ann(&ann_info.ann, ann_info.recv_relationship, as_obj);
+                    
+                    if is_valid {
                         // We need a different approach here to avoid borrowing conflicts
                         // Let's collect the announcements to propagate first
                         let mut anns_to_propagate = Vec::new();
@@ -110,9 +165,13 @@ impl SimulationEngine {
                             .or_insert_with(HashMap::new)
                             .insert(ann_info.ann.prefix, ann_info.ann.clone());
                         
-                        let best_ann = policy.get_best_ann_for_prefix(&ann_info.ann.prefix, &as_obj);
+                        let best_ann = policy.get_best_ann_for_prefix(&ann_info.ann.prefix, as_obj);
                         
-                        if let Some(best) = best_ann {
+                        if let Some(mut best) = best_ann {
+                            // When storing in local RIB, prepend our ASN to the path
+                            if best.as_path.first() != Some(&asn) {
+                                best.as_path.insert(0, asn);
+                            }
                             policy.local_rib.insert(ann_info.ann.prefix, best.clone());
                             
                             let should_prop = policy.should_propagate(&best, ann_info.recv_relationship);
@@ -120,11 +179,28 @@ impl SimulationEngine {
                             if should_prop {
                                 // Collect announcements to propagate
                                 for rel in [Relationships::Customers, Relationships::Peers, Relationships::Providers] {
-                                    if policy.should_propagate_to_rel(&best, rel) {
-                                        let neighbors = as_obj.get_neighbors(rel);
-                                        for &neighbor_asn in neighbors {
+                                    let should_prop = policy.should_propagate_to_rel(&best, rel);
+                                    
+                                    if should_prop {
+                                        let neighbors = match rel {
+                                            Relationships::Customers => &as_obj.customers,
+                                            Relationships::Peers => &as_obj.peers,
+                                            Relationships::Providers => &as_obj.providers,
+                                            _ => continue,
+                                        };
+                                        
+                                        for neighbor_as in neighbors.iter() {
+                                            let neighbor_asn = neighbor_as.asn;
                                             let recv_rel_for_neighbor = rel.invert();
-                                            let new_ann = best.copy_and_process(as_obj.asn, recv_rel_for_neighbor);
+                                            
+                                            // For propagation, we need the announcement without our ASN prepended
+                                            // So we'll use the version from ribs_in if available, or remove our ASN from the path
+                                            let mut ann_to_send = best.clone();
+                                            if ann_to_send.as_path.first() == Some(&asn) {
+                                                ann_to_send.as_path.remove(0);
+                                            }
+                                            
+                                            let new_ann = ann_to_send.copy_and_process(as_obj.asn, recv_rel_for_neighbor);
                                             anns_to_propagate.push((neighbor_asn, new_ann.clone(), recv_rel_for_neighbor));
                                             
                                             // Update ribs_out
@@ -138,7 +214,6 @@ impl SimulationEngine {
                         }
                         
                         // Now propagate the collected announcements
-                        
                         for (neighbor_asn, new_ann, rel) in anns_to_propagate {
                             if let Some(neighbor_policy) = self.policy_store.get_mut(&neighbor_asn) {
                                 neighbor_policy.receive_ann(new_ann, rel);
